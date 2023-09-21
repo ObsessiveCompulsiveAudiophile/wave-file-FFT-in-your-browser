@@ -1,2 +1,2 @@
 # wave-file-FFT-in-your-browser
-Javascript code which can apply Discrete Foruier Transform to an Impulse response wave file from your browser and graph the results
+Javascript code which can apply Discrete Foruier Transform to an Impulse response wave file from your browser and graph the results. The code can read and decode 16-bit pcm, 24-bit pcm, 32-bit pcm and 32-bit float wave files. DFT is O(n^2) time complexity (very slow) as it intends to be as simple as possible for ease of understanding. The code charts both time domain and frequency domain responses (including phase response) of the uploaded wave file.
