@@ -151,13 +151,8 @@
                     for (let i = 0; i <= N / 2; i++) {
                         const frequency = (i * samplingRate) / N;
                         const magnitude = 20 * Math.log10(Math.sqrt(fftResult[i].real ** 2 + fftResult[i].imag ** 2)) + dBOffset;
-                        let phase = (180 * Math.atan2(fftResult[i].imag, fftResult[i].real)) / Math.PI;
-                        // Wrap phase values between -180 and 180 degrees
-                        if (phase > 180) {
-                            phase -= 360;
-                        } else if (phase < -180) {
-                            phase += 360;
-                        }
+                        let phase = (-180 * Math.atan2(fftResult[i].imag, fftResult[i].real)) / Math.PI;
+                        
 
                         outputData.push([frequency.toFixed(6), magnitude.toFixed(6), phase.toFixed(6)]);
                     }
