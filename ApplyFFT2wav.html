@@ -1,0 +1,400 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Wav FFT by OCA 2023</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h3>WAV File Properties</h3>
+    <style>
+        p {
+            line-height: 0.5;
+        }
+    </style>
+
+    <p><strong>Bits Per Sample:</strong> <span id="bitsPerSample"></span></p>
+    <p><strong>Audio Format:</strong> <span id="audioFormat"></span></p>
+    <p><strong>Number of Channels:</strong> <span id="numChannels"></span></p>
+    <p><strong>Sample Rate:</strong> <span id="samplingRate"></span></p>
+    <p><strong>Byte Rate:</strong> <span id="byteRate"></span></p>
+    <p><strong>Block Align:</strong> <span id="blockAlign"></span></p>
+    <p><strong>Total Data Size:</strong> <span id="totalDataSize"></span></p>
+    <p><strong>Total Samples:</strong> <span id="totalSamples"></span></p>
+    <p><strong>Duration:</strong> <span id="timeDuration"></span> seconds</p>
+    <label for="dBOffset">dBOffset:</label>
+    <input type="number" id="dBOffset" value="85" step="1" min="-120" max="120">
+    <br />
+    <br />
+    <label for="fileInput">Select impulse response to upload:</label>
+    <input type="file" id="fileInput" accept=".wav">
+     <br />
+    <a id="downloadLink" style="display: none; margin-top: 10px;">Download Amplitude & Phase response as text</a>
+   
+    <div id="processing" style="display: none;">Please be patient! Fast Fourier Transforming..</div>
+
+    <canvas id="inputChart"></canvas>
+    <canvas id="outputChart"></canvas>
+    <canvas id="phaseChart"></canvas>
+
+    <script>
+        document.getElementById('fileInput').addEventListener('change', (event) => {
+            const fileInput = event.target;
+
+            const processing = document.getElementById('processing');
+            processing.style.display = 'block';
+            processing.insertAdjacentHTML('beforebegin', '<br>');
+
+            const wavFile = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const arrayBuffer = event.target.result;
+
+                // Read the WAV file header
+                const view = new DataView(arrayBuffer);
+                const format = view.getUint16(20, true);
+                const numChannels = view.getUint16(22, true);
+                const samplingRate = view.getUint32(24, true);
+                const byteRate = view.getUint32(28, true);
+                const blockAlign = view.getUint16(32, true);
+                const totalDataSize = view.getUint32(40, true);
+                const bitsPerSample = view.getUint16(34, true);
+                const timeDuration = totalDataSize / byteRate;
+                const totalSamples = totalDataSize / blockAlign;
+
+                // Update the HTML elements with header data
+                document.getElementById('bitsPerSample').textContent = bitsPerSample;
+                document.getElementById('audioFormat').textContent = format === 1 ? 'Little Endian/PCM' : (format === 3 ? 'Float' : 'Unknown Codec ID');
+                document.getElementById('numChannels').textContent = numChannels;
+                document.getElementById('samplingRate').textContent = samplingRate;
+                document.getElementById('byteRate').textContent = byteRate;
+                document.getElementById('blockAlign').textContent = blockAlign;
+                document.getElementById('totalDataSize').textContent = totalDataSize;
+                document.getElementById('totalSamples').textContent = totalSamples;
+                document.getElementById('timeDuration').textContent = timeDuration.toFixed(8);
+                
+                const dBOffset = parseFloat(document.getElementById('dBOffset').value);
+
+                // Check conditions and decode samples
+                let samples = [];
+                if (format === 1) { // PCM format
+                    if (bitsPerSample === 16) {
+                        samples = decodePCM16(arrayBuffer, blockAlign, totalDataSize);
+                    } else if (bitsPerSample === 24) {
+                        samples = decodePCM24(arrayBuffer, blockAlign, totalDataSize);
+                    } else if (bitsPerSample === 32) {
+                        samples = decodePCM32(arrayBuffer, blockAlign, totalDataSize);
+                    }
+                } else if (format === 3 && bitsPerSample === 32) { // IEEE format
+                    samples = decodeIEEE32(arrayBuffer, blockAlign, totalDataSize);
+                } else {
+                    alert('Unsupported format or bit depth!');
+                    return;
+                }
+
+                const N = totalDataSize * samplingRate / byteRate;
+                const buffer = new Array(N);
+                for (let i = 0; i < N; i++) {
+                    const sampleValue = samples[i];
+                    const realValue = sampleValue;
+                    const imagValue = 0; // Assuming the input values are all real
+                    buffer[i] = { real: realValue, imag: imagValue };
+                }
+
+
+                function fft(buffer, N) {
+    if (N <= 1) {
+        return buffer;
+    }
+
+    const even = new Array(N / 2);
+    const odd = new Array(N / 2);
+
+    for (let i = 0; i < N; i++) {
+        if (i % 2 === 0) {
+            even[i / 2] = buffer[i];
+        } else {
+            odd[(i - 1) / 2] = buffer[i];
+        }
+    }
+
+    const evenTransformed = fft(even, N / 2);
+    const oddTransformed = fft(odd, N / 2);
+
+    const output = new Array(N);
+
+    for (let k = 0; k < N / 2; k++) {
+        const angle = (2 * Math.PI * k) / N;
+        const t = {
+            real: Math.cos(angle),
+            imag: -Math.sin(angle), // Negative for the imaginary part
+        };
+        
+        const temp = complexMultiply(t, oddTransformed[k]);
+        output[k] = complexAdd(evenTransformed[k], temp);
+        output[k + N / 2] = complexSubtract(evenTransformed[k], temp);
+    }
+
+    return output;
+}
+
+function complexFromPolar(r, theta) {
+    return {
+        real: r * Math.cos(theta),
+        imag: r * Math.sin(theta),
+    };
+}
+
+function complexAdd(a, b) {
+    return {
+        real: a.real + b.real,
+        imag: a.imag + b.imag,
+    };
+}
+
+function complexSubtract(a, b) {
+    return {
+        real: a.real - b.real,
+        imag: a.imag - b.imag,
+    };
+}
+
+function complexMultiply(a, b) {
+    return {
+        real: a.real * b.real - a.imag * b.imag,
+        imag: a.real * b.imag + a.imag * b.real,
+    };
+}
+
+
+                setTimeout(() => {
+
+                    // Calculate the fft
+                    const fftResult = fft(buffer, N);
+
+                    processing.style.display = 'none';
+
+                    const chartsHeading = document.createElement('h4');
+                    chartsHeading.textContent = 'Time and Frequency domain charts';
+                    document.body.appendChild(chartsHeading);
+
+                    // Plot input chart
+                    plotInput(buffer, timeDuration);
+
+                    // Calculate frequency, magnitude, and phase
+                    const outputData = [];
+                    for (let i = 0; i <= N / 2; i++) {
+                        const frequency = (i * samplingRate) / N;
+                        const magnitude = 20 * Math.log10(Math.sqrt(fftResult[i].real ** 2 + fftResult[i].imag ** 2)) + dBOffset;
+                        let phase = (-180 * Math.atan2(fftResult[i].imag, fftResult[i].real)) / Math.PI;
+                        // Wrap phase values between -180 and 180 degrees
+                       
+                        outputData.push([frequency.toFixed(6), magnitude.toFixed(6), phase.toFixed(6)]);
+                    }
+
+                    // Plot output chart
+                    plotOutput(outputData);
+
+                    // Prepare output text
+                    let resultText = 'Frequency (Hz)\tMagnitude\tPhase (degrees)\n';
+                    for (let i = 1; i < N / 2; i++) {
+                        resultText += outputData[i].join('\t') + '\n';
+                    }
+
+                    // Create downloadable file
+                    const blob = new Blob([resultText], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    downloadLink.href = url;
+                    downloadLink.download = 'fft_result.txt';
+                    downloadLink.style.display = 'block';
+
+                }, 10);
+
+            };
+
+            reader.readAsArrayBuffer(wavFile);
+        });
+
+        // Get canvas references
+        const inputCanvas = document.getElementById('inputChart');
+        const outputCanvas = document.getElementById('outputChart');
+
+        // Draw charts
+        function plotInput(buffer, timeDuration) {
+            const ctx = inputCanvas.getContext('2d');
+            const timeScale = Array.from({ length: buffer.length }, (_, i) => (i * timeDuration / (buffer.length - 1)).toFixed(2));
+            const inputChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: timeScale, // Use the time scale for x-axis labels
+
+                    datasets: [{
+                        label: 'Impulse Response',
+                        borderWidth: 1,
+                        pointRadius: 2,
+                        data: buffer.map(v => v.real)
+                    }]
+                }
+            });
+        }
+
+        function plotOutput(outputData) {
+            const ctx = outputCanvas.getContext('2d');
+            const frequencies = outputData.map(data => data[0]);
+            const magnitudes = outputData.map(data => data[1]);
+
+            const phaseCanvas = document.getElementById('phaseChart');
+            const phaseCtx = phaseCanvas.getContext('2d');
+            const phases = outputData.map(data => data[2]);
+
+            // Create the magnitude chart
+            const outputChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: frequencies,
+                    datasets: [{
+                        label: 'Frequency Response',
+                        data: magnitudes,
+                        fill: false,
+                        borderColor: 'blue',
+                        backgroundColor: 'blue',
+                        borderWidth: 1,
+                        pointRadius: 2,
+                    }],
+                },
+                options: {
+                    scales: {
+                        x: {
+                            type: 'logarithmic',
+                            position: 'bottom',
+                            grid: {
+                                tickColor: 'red'
+                            },
+                            ticks: {
+                                color: 'blue',
+                            }
+                        },
+                        y: {
+                            type: 'linear', // Use linear scale for magnitude
+                            position: 'left',
+                        },
+                    },
+                },
+            });
+
+            // Create the phase chart
+            const phaseChart = new Chart(phaseCtx, {
+                type: 'line',
+                data: {
+                    labels: frequencies,
+                    datasets: [{
+                        label: 'Phase Response',
+                        data: phases,
+                        fill: false,
+                        borderColor: 'red',
+                        backgroundColor: 'red',
+                        borderWidth: 1,
+                        pointRadius: 2,
+                    }],
+                },
+                options: {
+                    scales: {
+                        x: {
+                            type: 'logarithmic',
+                            position: 'bottom',
+                        },
+                        y: {
+                            type: 'linear', // Use linear scale for phase
+                            position: 'left',
+                            min: -180, // Set the minimum value for phase
+                            max: 180,  // Set the maximum value for phase
+                            ticks: {
+                                callback: function (value, index, values) {
+                                    return value.toString() + '°';
+                                },
+                            },
+                            scaleLabel: {
+                                display: true,
+                                labelString: 'Phase (degrees)',
+                            },
+                        },
+                    },
+                },
+            });
+        }
+
+        function decodePCM16(arrayBuffer, blockAlign, totalDataSize) {
+            const samples = [];
+            const dataView = new DataView(arrayBuffer, 44); // Start after the WAV header
+
+            for (let i = 0; i < totalDataSize / blockAlign; i++) {
+                const value = dataView.getInt16(i * blockAlign, true);
+                samples.push(value);
+            }
+
+            return samples;
+        }
+
+        function decodePCM24(arrayBuffer, blockAlign, totalDataSize) {
+            const samples = [];
+            const dataView = new DataView(arrayBuffer, 44); // Start after the WAV header
+
+            for (let i = 0; i < totalDataSize / blockAlign; i++) {
+                const byte1 = dataView.getUint8(i * blockAlign);
+                const byte2 = dataView.getUint8(i * blockAlign + 1);
+                const byte3 = dataView.getUint8(i * blockAlign + 2);
+
+                // Combine the 24-bit values into a 32-bit signed integer
+                let value = (byte1 << 8) | (byte2 << 16) | (byte3 << 24);
+
+                // Extend the sign bit if necessary
+                if (value & 0x80000000) {
+                    value |= 0xff000000;
+                }
+
+                samples.push(value);
+            }
+
+            return samples;
+        }
+
+        function decodePCM32(arrayBuffer, blockAlign, totalDataSize) {
+            const samples = [];
+            const dataView = new DataView(arrayBuffer, 44); // Start after the WAV header
+
+            for (let i = 0; i < totalDataSize / blockAlign; i++) {
+                const value = dataView.getInt32(i * blockAlign, true);
+                samples.push(value);
+            }
+
+            return samples;
+        }
+
+        function decodeIEEE32(arrayBuffer, blockAlign, totalDataSize) {
+            const samples = [];
+            const dataView = new DataView(arrayBuffer, 44); // Start after the WAV header
+
+            for (let i = 0; i < totalDataSize / blockAlign; i++) {
+                const intBits = dataView.getInt32(i * blockAlign, true);
+
+                // Get sign bit
+                const sign = (intBits >>> 31) === 0 ? 1 : -1;
+
+                // Get exponent bits
+                const exponentBits = (intBits >>> 23) & 0xff;
+                const exponent = exponentBits - 127;
+
+                // Get mantissa bits and add leading 1
+                const mantissa = (intBits & 0x7fffff) | 0x800000;
+
+                // Calculate final value
+                const float32 = sign * mantissa * Math.pow(2, exponent - 23);
+                samples.push(float32);
+            }
+
+            return samples;
+        }
+    </script>
+
+</body>
+</html>
